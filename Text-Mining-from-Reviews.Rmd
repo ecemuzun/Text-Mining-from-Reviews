@@ -1,0 +1,1484 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(rvest)
+library(dplyr)
+library(tidyverse)
+library(qdap)
+library(cld2)
+library(tidytext)
+library(hunspell)
+library(stringi)
+library(igraph)
+library(ggraph)
+library(wordcloud)
+library(tm)
+library(textstem)
+library(gridExtra)
+library(ggrepel)
+```
+
+```{r eval=FALSE}
+# Function for retrieving the reviewer names
+get_reviewer_names <- function(sub_link) {
+  agency_page <- read_html(sub_link)
+  reviewer_name <- agency_page %>%
+    html_nodes(".styles_consumerDetailsWrapper__p2wdr") %>%
+    html_node(".styles_consumerName__dP8Um") %>%
+    html_text() %>%
+    paste(collapse = "<<")
+  return(reviewer_name)
+}
+
+# Function for retrieving the review summaries
+get_review_summaries <- function(sub_link) {
+  agency_page <- read_html(sub_link)
+  review_summary <- agency_page %>%
+    html_nodes(".styles_reviewContent__0Q2Tg") %>%
+    html_node(".styles_linkwrapper__73Tdy") %>%
+    html_text() %>%
+    paste(collapse = "<<")
+  return(review_summary)
+}
+
+# Function for retrieving the reviews
+get_reviews <- function(sub_link) {
+  agency_page <- read_html(sub_link)
+  review <- agency_page %>%
+    html_nodes(".styles_reviewContent__0Q2Tg") %>%
+    html_node("p.typography_typography__QgicV") %>%
+    html_text() %>%
+    paste(collapse = "<<")
+  return(review)
+}
+
+# Function for retrieving the stars each reviewer gave for the travel agency
+get_stars <- function(sub_link) {
+  agency_page <- read_html(sub_link)
+  overall_star <- agency_page %>%
+    html_nodes(".styles_reviewHeader__iU9Px") %>%
+    html_node(".star-rating_starRating__4rrcf img") %>%
+    html_attr("alt") %>%
+    paste(collapse = "<<")
+  return(overall_star)
+}
+
+# Function for retrieving the dates of the reviews
+get_date <- function(sub_link) {
+  agency_page <- read_html(sub_link)
+  date <- agency_page %>%
+    html_nodes(".styles_reviewHeader__iU9Px") %>%
+    html_node(".typography_typography__QgicV time") %>%
+    html_attr("datetime") %>%
+    str_sub(., 1,10) %>%
+    paste(collapse = "<<")
+  return(date)
+}
+
+# Function for retrieving the country that the reviewer is located in
+get_country <- function(sub_link) {
+  agency_page <- read_html(sub_link)
+  country <- agency_page %>%
+    html_nodes(".styles_consumerExtraDetails__fxS4S") %>%
+    html_node("span.typography_typography__QgicV") %>%
+    html_text() %>%
+    paste(collapse = "<<")
+  return(country)
+}
+```
+
+
+```{r eval=FALSE}
+# Preparing the tables to be used
+travel_agencies <- data.frame()
+travel_agencies_new <- data.frame()
+
+# For loop for going through each odd numbered page on the main link
+for (page_result in seq(from = 1, to = 79, by = 2)) {
+  # Reading the page links from the main page
+  link <- paste0("https://www.trustpilot.com/categories/travel_agency?page=", page_result)
+  page <-  read_html(link)
+
+  # Getting the names of the travel agencies
+  agency_name <- page %>%  html_nodes(".styles_displayName__1LIcI") %>% html_text()
+    Sys.sleep(1)
+   
+  # Getting the categories of the travel agencies
+  category <- page %>% html_nodes(".styles_desktop__3N0-b span:nth-child(1)") %>% html_text()
+    Sys.sleep(1)
+   
+  # Getting the overall ratings of the travel agencies
+  overall_rating <- page %>% html_nodes(".styles_trustScore__nLHX2 .styles_desktop__3N0-b") %>% html_text()
+    Sys.sleep(1)
+ 
+  # Getting each travel agency link on the page that is open
+  agency_links <- page %>%  html_nodes(".paper_paper__29o4A a") %>% html_attr("href") %>% paste0("https://www.trustpilot.com", .)
+  travel_agencies <- data.frame()
+ 
+  # For loop for going through every travel agency on the main page that is open
+  for (page_result1 in seq(from = 1, to = length(agency_links), by = 1)) {
+    # Temporary data frame that is going to be added at the end of the iterations for each travel agency
+    travel_agencies_temp <- data.frame()
+    # For loop for going through the first 5 sub pages of the travel agency
+    for (page_result2 in seq(from = 1, to = 5, by = 1)) {
+      sub_links <- agency_links[page_result1] %>% paste0(., "?page=", page_result2)
+      reviewer <- sapply(sub_links, FUN = get_reviewer_names, USE.NAMES = FALSE)
+        Sys.sleep(2)
+      summary <- sapply(sub_links, FUN = get_review_summaries, USE.NAMES = FALSE)
+        Sys.sleep(2)
+      review <- sapply(sub_links, FUN = get_reviews, USE.NAMES = FALSE)
+        Sys.sleep(2)
+      star <- sapply(sub_links, FUN = get_stars, USE.NAMES = FALSE)
+        Sys.sleep(2)
+      date <- sapply(sub_links, FUN = get_date, USE.NAMES = FALSE)
+        Sys.sleep(2)
+      country <- sapply(sub_links, FUN = get_country, USE.NAMES = FALSE)
+        Sys.sleep(2)
+      travel_agencies_temp <- rbind(travel_agencies_temp,
+                                    data.frame(agency_name = agency_name[page_result1],
+                                               category = category[page_result1],
+                                               overall_rating = overall_rating[page_result1],
+                                               reviewer = reviewer,
+                                               summary = summary,
+                                               review = review,
+                                               star = star,
+                                               date = date,
+                                               country = country,
+                                               stringsAsFactors = FALSE))
+     
+      # If all of the sub pages are gone over, take the information stored in the temporary data frame and merge them using a separator,  
+      # otherwise just print the sub page that just finished being scraped from
+      ifelse(page_result2 == 5, travel_agencies_temp <- t(travel_agencies_temp) %>%
+                                                        as.data.frame() %>%
+                                                        unite(col = "V", sep = "<<") %>%
+                                                        t(), print(paste0("Subpage: ", page_result2, " - ", agency_name[page_result1])))
+    }
+  # Add the final version of the temporary data frame of the travel agency to the data frame that we have been storing information into by
+  # binding through rows
+  travel_agencies <- rbind(travel_agencies, travel_agencies_temp)
+  }
+  # Add the travel agency information to a different data frame by binding through rows
+  travel_agencies_new <- rbind(travel_agencies_new, travel_agencies)
+  print(paste0("Page: ", page_result))
+}
+
+# Saving the final data frame as RDS in order to store in the environment in case it gets lost
+# saveRDS(travel_agencies_new, "travel_agencies_1_13.rds")
+# saveRDS(travel_agencies_new, "travel_agencies_15_27.rds")
+# saveRDS(travel_agencies_new, "travel_agencies_29_41.rds")
+# saveRDS(travel_agencies_new, "travel_agencies_43_55.rds")
+# saveRDS(travel_agencies_new, "travel_agencies_57_69.rds")
+# saveRDS(travel_agencies_new, "travel_agencies_65_68.rds")
+# saveRDS(travel_agencies_new, "travel_agencies_69_72.rds")
+# saveRDS(travel_agencies_new, "travel_agencies_73_75.rds")
+# saveRDS(travel_agencies_new, "travel_agencies_76_79.rds")
+```
+
+```{r eval=FALSE}
+# Reading all the RDS files that were saved and binding them together
+travel_agencies_1_13 <- readRDS("travel_agencies_1_13.rds")
+travel_agencies_15_27 <- readRDS("travel_agencies_15_27.rds")
+travel_agencies_29_41 <- readRDS("travel_agencies_29_41.rds")
+travel_agencies_43_55 <- readRDS("travel_agencies_43_55.rds")
+travel_agencies_57_69 <- readRDS("travel_agencies_57_69.rds")
+travel_agencies_65_68 <- readRDS("travel_agencies_65_68.rds")
+travel_agencies_69_72 <- readRDS("travel_agencies_69_72.rds")
+travel_agencies_73_75 <- readRDS("travel_agencies_73_75.rds")
+travel_agencies_76_79 <- readRDS("travel_agencies_76_79.rds")
+
+travel_all <- rbind(travel_agencies_1_13,
+                    travel_agencies_15_27,
+                    travel_agencies_29_41,
+                    travel_agencies_43_55,
+                    travel_agencies_57_69,
+                    travel_agencies_65_68,
+                    travel_agencies_69_72,
+                    travel_agencies_73_75,
+                    travel_agencies_76_79)
+saveRDS(travel_all, "travel_all.rds")
+
+# Removing the parts of data from the environment since the combined version is there
+rm(travel_agencies_1_13,
+   travel_agencies_15_27,
+   travel_agencies_29_41,
+   travel_agencies_43_55,
+   travel_agencies_57_69,
+   travel_agencies_65_68,
+   travel_agencies_69_72,
+   travel_agencies_73_75,
+   travel_agencies_76_79)
+```
+
+```{r}
+travel_all <- readRDS("travel_all.rds")
+# Removing the duplicated observations that occurred during scraping since the data were scraped part by part and the website was updated constantly with new ratings, hence moving the travel agencies to different rows and pages
+travel_all <- travel_all %>% distinct()
+
+# Adding a dummy variable to join the data after separating the entries based on the separator "<<"
+travel_all$id <- 1:nrow(travel_all)
+
+# Storing the separated information separately because of different numbers of rows and then using inner join to join them together
+a <- travel_all[, c(1, 2, 3, 10)] %>% separate_rows(1:4, sep = "<<")
+
+# The row on 751 had the same separator "<<" as the one being used here. Once the review was checked, it was removed
+travel_all$review[751] <- str_replace(travel_all$review[751], "d. <<", "d.")
+
+b <- travel_all[, 4:10] %>% separate_rows(1:7, sep = "<<")
+
+
+travel_all <- a %>% inner_join(b)
+# rm(a, b)
+
+# Removing the dummy variable since it is no longer needed
+travel_all$id <- NULL
+
+# Since there were still duplicate rows once the data set was viewed, they were removed
+travel_all <- travel_all %>% distinct()
+
+# Adding ID column for companies to make it easier to differentiate the separated information that was priorly collapsed later on
+for_agency_ids <- travel_all %>%
+  select(agency_name) %>%
+  distinct()
+
+# To be used to add agency IDs
+for_agency_ids$agency_id <- 1:nrow(for_agency_ids)
+
+# Joining the agency ID variable using the agency name
+travel_all <- travel_all %>%
+  left_join(for_agency_ids)
+# rm(for_agency_ids)
+
+# Reordering the variables
+travel_all <- travel_all %>%
+  select(agency_id, agency_name, category, overall_rating, reviewer, summary, review, star, date, country)
+```
+
+```{r}
+# Checking the structure of the data
+str(travel_all)
+
+# Removing unnecessary text from numerical data from overall rating and individual ratings and converting them from character to numeric values
+travel_all$overall_rating <- travel_all$overall_rating %>%
+  substr(12, 14) %>%
+  as.numeric() %>%
+  round() # Rounded to reduce the levels later on
+travel_all$star <- travel_all$star %>%
+  substr(7, 7) %>%
+  as.numeric()
+
+# Converting the variable type of date from character to date
+travel_all$date <- as.Date(travel_all$date)
+
+# Extracting the date from date variable so that year, month, and day are in separate columns and converting them from character to numeric values
+travel_all$year <- format(travel_all$date, "%Y") %>% as.numeric()
+travel_all$month <- format(travel_all$date, "%m") %>% as.numeric()
+travel_all$day <- format(travel_all$date, "%d") %>% as.numeric()
+
+# Removing the NULL values where there were no individuals left a rating or a review as well as "NA" string from reviews where while scraping, no text was found
+travel_all <- travel_all %>% na.omit()
+travel_all <- travel_all[-which(grepl("NA", travel_all$review, ignore.case = FALSE)),]
+
+# Adding review ID
+travel_all$review_id <- 1:nrow(travel_all)
+```
+
+```{r}
+# Finding the agency IDs that have less than 5 reviews
+to_remove_companies <- travel_all %>%
+  group_by(agency_id) %>%
+  summarise(count_of_reviews = n()) %>%
+  filter(count_of_reviews < 5) %>%
+  pull(agency_id)
+
+# Since those have less than 5 reviews, they are removed from the data set
+travel_all <- travel_all %>%
+  filter(!(agency_id %in% to_remove_companies))
+# rm(to_remove_companies)
+
+# Collapsing the summary of the review as well as the review itself to work on them at the same time instead of repeating the same steps for both
+travel_all <- travel_all %>%
+  mutate(summary_review = paste(coalesce(travel_all$summary, ""), coalesce(travel_all$review, ""))) %>%
+  select(-summary, -review)
+
+# Replacing common abbreviations with their longer versions to be used for different parts
+travel_all$summary_review <- replace_abbreviation(travel_all$summary_review)
+# Removing text in between the brackets to be used for different parts
+travel_all$summary_review <- bracketX(travel_all$summary_review)
+# Replacing the common symbols with their meanings to be used for different parts
+travel_all$summary_review <- replace_symbol(travel_all$summary_review)
+# Removing the digits in the text to be used for different parts
+travel_all$summary_review <- gsub("[[:digit:]]+", "", travel_all$summary_review)
+# Removing the white spaces in the text to be used for different parts
+travel_all$summary_review <- str_squish(travel_all$summary_review)
+```
+
+```{r}
+# Adding the length of the reviews as a variable and plotting them
+travel_all$review_length <- nchar(travel_all$summary_review)
+hist(travel_all$review_length, breaks = 200, main = "Review Length (All)", xlab = "Review Length")
+
+# The very short and very long reviews are removed
+travel_all <- travel_all %>% filter(review_length > 150) %>% filter(review_length < 2000)
+hist(travel_all$review_length, breaks = 200, main = "Review Length (Trimmed)", xlab = "Review Length")
+```
+
+* Language filtering
+```{r}
+travel_all$summary_review <- iconv(travel_all$summary_review)
+travel_all$language <- detect_language(travel_all$summary_review)
+table(travel_all$language)
+travel_all <- travel_all%>%
+  filter(language == "en")
+
+head(travel_all)
+
+# The final partially-cleaned data set is saved. Further cleaning is to be done depending on the varying parts
+# saveRDS(travel_all, "travel_all.rds")
+```
+
+# Spell Checking
+```{r}
+# Getting the reviews column
+reviews <- travel_all %>% select(review_id, summary_review)
+
+# Tokenization of the reviews for spell checking, then extracting the unique words
+for_spellcheck <- unnest_tokens(reviews, word, summary_review)
+unique_words <- unique(for_spellcheck$word)
+
+# Finding the words with spelling mistakes and getting the unique spelling mistake
+spelling_mistakes <- hunspell(unique_words)
+spelling_mistakes <- unique(unlist(spelling_mistakes))
+
+# Getting the correct word suggestions
+suggested_words <- hunspell_suggest(spelling_mistakes)
+suggested_words <- unlist(lapply(suggested_words, function(x) x[1]))
+
+mistakes <- as.data.frame(cbind(spelling_mistakes, suggested_words))
+mistake_freq <- count(for_spellcheck, word)
+mistake_freq <- inner_join(mistake_freq, mistakes, by = c("word" = "spelling_mistakes"))
+word_suggestions <- arrange(mistake_freq, desc(n))
+na_words <- word_suggestions %>% filter(is.na(suggested_words))
+
+# To handle the spelling suggestions by hand
+# write.csv(word_suggestions, "word_suggestions.csv")
+# write.csv(na_words, "na_words.csv")
+
+# Loading the prepared data
+word_suggestions <- read.csv("word_suggestions.csv")
+na_words <- read.csv("na_words.csv")
+word_suggestions <- word_suggestions %>% select(-X) %>% na.omit()
+na_words <- na_words %>% select(-X) %>% na.omit()
+
+word_suggestions_all <- rbind(word_suggestions, na_words)
+word_suggestions_all <- arrange(word_suggestions_all, desc(n))
+
+# Final data
+# write.csv(word_suggestions_all, "word_suggestions_all.csv")
+
+# Replacing the mistakes words with suggested ones
+word_suggestions_all <- read.csv("word_suggestions_all.csv", stringsAsFactors = FALSE)
+mistaken_words <- paste0(" ", word_suggestions_all$word, " ")
+correct_words <- paste0(" ", word_suggestions_all$suggested_words, " ")
+
+replace_mistakes <- function(x) {
+ x$summary_review <- stri_replace_all_regex(x$summary_review, mistaken_words, correct_words, vectorize_all = FALSE)
+ return(x)
+}
+
+# Splitting reviews based on available cores
+reviews <- replace_mistakes(reviews)
+reviews <- reviews %>% arrange(review_id)
+# saveRDS(reviews, "spell_checked_reviews.rds")
+
+# Replacing the text with the spell checked version
+travel_all$summary_review <- reviews$summary_review
+```
+
+```{r}
+# Grouping the collapsed variable of summaries and reviews by agency IDs
+text_grouped_by_company <- travel_all %>%
+  unnest_tokens(word, summary_review) %>%
+  group_by(agency_id) %>%
+  summarise(text_grouped  = paste(word, collapse = " "))
+
+# saveRDS(text_grouped_by_company, "text_grouped_by_company.rds")
+```
+
+# Tokenizing
+```{r}
+# Tokenizing the grouped data set
+tokenized_reviews_grouped_by_company <- text_grouped_by_company %>%
+  unnest_tokens(word, text_grouped)
+tokenized_reviews_grouped_by_company$word <- lemmatize_words(tokenized_reviews_grouped_by_company$word)
+tokenized_reviews_grouped_by_company <- tokenized_reviews_grouped_by_company %>%
+  count(word, agency_id, sort = TRUE)
+```
+
+```{r}
+# Calculating the token length to remove those that are very short or long
+tokenized_reviews_grouped_by_company$token_length <- nchar(tokenized_reviews_grouped_by_company$word)
+
+# Inspecting the distribution
+tokenized_reviews_grouped_by_company %>% group_by(token_length) %>% summarise(total = n())
+
+# Since there are tokens of 1 and 2 characters that look abnormal based on the distribution, removing them
+tokenized_reviews_grouped_by_company <- tokenized_reviews_grouped_by_company %>%
+  filter(token_length > 2)
+
+# Inspecting the distribution from the opposite side
+tokenized_reviews_grouped_by_company %>% 
+  group_by(token_length) %>%
+  summarise(total = n()) %>%
+  arrange(desc(token_length))
+
+# After 14 characters there are some issues, probably with the tokenization parsing, hence those tokens with character length more than 14 are removed
+tokenized_reviews_grouped_by_company <- tokenized_reviews_grouped_by_company %>%
+  filter(token_length <= 14)
+
+# saveRDS(tokenized_reviews_grouped_by_company, "tokenized_reviews_grouped_by_company.rds")
+```
+
+* Trying different dictionaries for stop word removal
+```{r}
+# Stop words from tidytext package
+tokenized_reviews_regular <- tokenized_reviews_grouped_by_company %>% anti_join(stop_words)
+plot_regular <- plot(freq_terms(tokenized_reviews_regular$word)) + labs(title = "After Removing Stop Words")
+
+# BuckleySaltonSWL stop words dictionary
+bsswl <- data.frame(BuckleySaltonSWL) %>% rename(word = BuckleySaltonSWL)
+tokenized_reviews_BS <- tokenized_reviews_grouped_by_company %>% anti_join(bsswl)
+plot_bsswl <- plot(freq_terms(tokenized_reviews_BS$word)) + labs(title = "After Removing BuckleySaltonSWL Stop Words")
+
+# Dolch stop words dictionary
+dolch <- data.frame(Dolch) %>% rename(word = Dolch)
+tokenized_reviews_dolch <- tokenized_reviews_grouped_by_company %>% anti_join(dolch)
+plot_dolch <- plot(freq_terms(tokenized_reviews_dolch$word)) + labs(title = "After Removing Dolch Stop Words")
+
+# Fry Top 1000 stop words dictionary
+fry <- data.frame(Fry_1000) %>% rename(word = Fry_1000)
+tokenized_reviews_fry <- tokenized_reviews_grouped_by_company %>% anti_join(fry)
+plot_fry <- plot(freq_terms(tokenized_reviews_fry$word)) + labs(title = "After Removing Fry Top 1000 Stop Words")
+
+# OnixTxtRetToolkitSWL1 stop words dictionary
+onix <- data.frame(OnixTxtRetToolkitSWL1) %>% rename(word = OnixTxtRetToolkitSWL1)
+tokenized_reviews_onix <- tokenized_reviews_grouped_by_company %>% anti_join(onix)
+plot_onix <- plot(freq_terms(tokenized_reviews_onix$word)) + labs(title = "After Removing OnixTxtRetToolkitSWL1 Stop Words")
+
+# Fry Top 100 stop words dictionary
+fry100 <- data.frame(Top100Words) %>% rename(word = Top100Words)
+tokenized_reviews_fry100 <- tokenized_reviews_grouped_by_company %>% anti_join(fry100)
+plot_fry100 <- plot(freq_terms(tokenized_reviews_fry100$word)) + labs(title = "After Removing Fry Top 100 Stop Words")
+
+# Fry Top 200 stop words dictionary
+fry200 <- data.frame(Top200Words) %>% rename(word = Top200Words)
+tokenized_reviews_fry200 <- tokenized_reviews_grouped_by_company %>% anti_join(fry200)
+plot_fry200 <- plot(freq_terms(tokenized_reviews_fry200$word)) + labs(title = "After Removing Fry Top 200 Stop Words")
+
+# Plotting the most frequent words after using each dictionary separately to compare them
+grid.arrange(plot_regular, plot_bsswl, plot_dolch, plot_fry, plot_onix, plot_fry100, plot_fry200)
+
+# Since the environment has many variables that are not going to be used again, removing everything and only loading the ones that are going to be used
+# rm(list = ls())
+# travel_all <- readRDS("travel_all.rds")
+# text_grouped_by_company <- readRDS("text_grouped_by_company.rds")
+# tokenized_reviews_grouped_by_company <- readRDS("tokenized_reviews_grouped_by_company.rds")
+```
+** While examining the frequent terms after removing the stop words, it is observed that the "stop_words" dictionary from tidytext package gives more meaningful and important insight, hence it was picked as the base of the stop words to be used.
+
+```{r}
+# Removing the stop words from tokenized reviews
+tokenized_reviews_grouped_by_company <- tokenized_reviews_grouped_by_company %>% anti_join(stop_words, by = "word")
+
+# Looking at the frequent terms
+plot(freq_terms(tokenized_reviews_grouped_by_company), main = "After Removing Default Stop Words")
+
+# Creating a data frame for custom words
+custom_stop_words_a <- c("service", "travel", "day", "company", "trip", "customer", "people", "lot", "feel", "highly", "vrbo")
+custom_stop_words_dfa <- data.frame(word = custom_stop_words_a, lexicon = rep("custom", length(custom_stop_words_a)))
+
+# Removing the custom stop words and checking the end result
+tokenized_reviews_grouped_by_company <- tokenized_reviews_grouped_by_company %>% anti_join(custom_stop_words_dfa)
+plot(freq_terms(tokenized_reviews_grouped_by_company)) + labs(title = "After Removing All Stop Words")
+```
+
+```{r}
+# Calculating tf-idf using the company as the document level
+tokenized_reviews_grouped_by_tf_idf <- tokenized_reviews_grouped_by_company %>%
+  bind_tf_idf(word, agency_id, n)
+
+# Plotting the distribution of tf-idf
+hist(tokenized_reviews_grouped_by_tf_idf$tf_idf, breaks = 200, main = "TF-IDF plot")
+
+tokenized_reviews_grouped_by_tf_idf <- tokenized_reviews_grouped_by_tf_idf %>%
+  filter(tf_idf < 0.025)
+
+hist(tokenized_reviews_grouped_by_tf_idf$tf_idf, breaks = 200, main = "TF-IDF plot")
+
+# From the plot, it is observed that the cut-off value is at 0.008
+tokenized_reviews_grouped_by_tf_idf <- tokenized_reviews_grouped_by_tf_idf %>%
+  filter(tf_idf < 0.020)
+
+hist(tokenized_reviews_grouped_by_tf_idf$tf_idf,breaks = 200, main = "TF-IDF plot")
+
+# Also, it is observed that in order to remove very common terms, those with tf-idf < 0.00025 should be removed
+tokenized_reviews_grouped_by_tf_idf <- tokenized_reviews_grouped_by_tf_idf %>%
+  filter(tf_idf > 0.0006)
+
+tokenized_reviews_grouped_by_tf_idf %>% group_by(word) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total)) %>%
+  slice_max(total, n = 50)
+
+# It is noticed that "receive", "star", "week", "dollar", and "extremely" can also be stop words
+custom_dictionary_a <- custom_stop_words_dfa %>%
+  rbind(word = "receive", lexicon = "custom",
+        word = "star", lexicon = "custom",
+        word = "week", lexicon = "custom",
+        word = "dollar", lexicon = "custom") %>%
+  rbind(stop_words) %>%
+  rbind(custom_stop_words_dfa)
+
+tokenized_reviews_grouped_by_tf_idf <- tokenized_reviews_grouped_by_tf_idf %>%
+  anti_join(custom_dictionary_a)
+```
+
+# Part A
+```{r}
+# Extracting agency IDs and overall ratings
+for_overall <- travel_all %>% select(., c(1, 4)) %>% distinct()
+
+# Adding the overall ratings
+tokenized_reviews_grouped_by_company <- tokenized_reviews_grouped_by_company %>%
+  left_join(for_overall)
+```
+
+```{r}
+# Finding the dominant words per overall rating
+dominant_words_per_star <- tokenized_reviews_grouped_by_company %>%
+  right_join(tokenized_reviews_grouped_by_tf_idf) %>%
+  anti_join(custom_dictionary_a) %>%
+  group_by(overall_rating) %>%
+  count(word) %>%
+  rename(count = n) %>%
+  slice_max(count, n = 15) %>%
+  arrange(desc(count)) %>%
+  ungroup()
+
+# Visaulising the 15 dominant words per rating
+ggplot(dominant_words_per_star, aes(x = count, y = reorder_within(word, count, overall_rating), fill = overall_rating)) +
+  geom_col(show.legend = FALSE) + facet_wrap(~ overall_rating, nrow = 2, scales = "free") +
+  labs(x = "Count", y = "Words", title = "Dominant Words Per Star Rating") + scale_y_reordered()
+```
+* It can be seen that while "bad", "late", and "refund" appears among the dominant words for lower star ratings, it is not apparent for the other ratings. On higher star ratings, words like "excellent", "amaze", "wonderful", "professional", and "helpful" are appearing. On all star rating categories, "time" appears as one of the dominant words, which indicates that it is an important aspect when people are writing reviews.
+
+# Unigrams and n-grams for ungrouped reviews
+```{r}
+# Counting the number of total words in the collapsed variable of review and its summary
+travel_all$total_words_text <- stringr::str_count(travel_all$summary_review, "\\S+")
+
+travel_all %>%
+  ggplot(., aes(total_words_text)) +
+  geom_histogram(binwidth = 5)
+
+# It appears that no filtering is required based on the number of words
+```
+
+```{r}
+# Tokenizing the reviews and their summaries and removing the custom stop words for unigrams
+unigram <- travel_all %>%
+  unnest_tokens(word, summary_review, token = "ngrams", n = 1) %>%
+  anti_join(custom_dictionary_a)
+
+# Finding the top 10 unigrams and showing their frequencies as well as the average ratings they were used for
+unigram_top10 <- unigram %>%
+  group_by(word) %>%
+  summarise(Frequency = n(),
+            Average_Rating = mean(star)) %>%
+  top_n(10, Frequency) %>%
+  arrange(desc(Frequency))
+
+# Visualising the top 10 unigram frequency for ungrouped reviews
+unigram_top10 %>%
+  ggplot(aes(Frequency, reorder(word, Frequency))) +
+  geom_col() +
+  labs(title = "Top 10 Unigram Frequencies (Review Level)",
+         x = "Frequency",
+         y = "Terms") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Visualising the top 10 unigrams based on their frequencies and the average ratings
+unigram_top10 %>%
+  ggplot(aes(Average_Rating, Frequency)) +
+  geom_point(size = 2) +
+  geom_text_repel(aes(label = word), max.overlaps = 15) +
+  labs(title = "Top 10 Unigram Frequency (Review Level)",
+         x = "Average Rating",
+         y = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Visualising the top 10 unigrams for each rating
+unigram %>%
+  group_by(word) %>%
+  summarise(n = n(),
+            avg_star = round(mean(star))) %>%
+  arrange(desc(n)) %>%
+  group_by(avg_star) %>%
+  slice_max(n, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = avg_star)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Top 10 Unigram Frequencies For Rating Categories (Review Level)",
+         x = "Frequency",
+         y = "Terms") +
+  facet_wrap(~ avg_star, nrow = 2, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# Tokenizing the reviews and their summaries as bigrams
+bigram <- travel_all %>%
+  unnest_tokens(word, summary_review, token = "ngrams", n = 2)
+
+# Adding indices for each row to separate the words, so the stop words can be removed
+bigram$index <- seq.int(nrow(bigram))
+
+# Separating the bigrams
+bigrams_separated <- bigram %>%
+  separate(word, c("word1", "word2"), sep = " ") %>%
+  select("index", "word1","word2")
+
+# Adding the separated versions of bigrams to the data frame
+bigram <- bigram %>%
+  left_join(bigrams_separated, by = "index")
+
+# Since words that have been a stop word for unigrams can be more informative and specific for bigrams and trigrams, a separate custom stop word dictionary is created
+custom_stop_words_ngram <- data.frame()
+
+# Adding the base level stop words to the dictionary
+custom_dictionary_ngram <- custom_stop_words_ngram %>%
+  rbind(stop_words)
+
+# Removing the instances where the bigram contains a stop word from the custom ngram dictionary
+bigram <- bigram %>%
+  filter(!word1 %in% custom_dictionary_ngram$word) %>%
+  filter(!word2 %in% custom_dictionary_ngram$word)
+
+# Finding the top 10 bigrams and showing their frequencies as well as the average ratings they were used for
+bigram_top10 <- bigram %>%
+  group_by(word) %>%
+  summarise(Frequency = n(),
+            Average_Rating = mean(star)) %>%
+  top_n(10, Frequency) %>%
+  arrange(desc(Frequency))
+
+# Visualising the top 10 bigram frequency for ungrouped reviews
+bigram_top10 %>%
+  ggplot(aes(Frequency, reorder(word, Frequency))) +
+  geom_col() +
+  labs(title = "Top 10 Bigram Frequencies (Review Level)",
+         x = "Frequency",
+         y = "Terms") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Adding custom stop words for bigrams and trigrams
+custom_stop_words_ngram1 <- c("guides", "costa", "rica", "american", "hong", "kong", "dot", "customer", "due", "cathay", "pacific", "sky", "dollar", "meredith", "lodging", "multiple", "proble", "las", "vegas", "ago", "diamond", "resorts", "company")
+
+custom_stop_words_ngram <- data.frame(word = custom_stop_words_ngram1, lexicon = rep("custom", length(custom_stop_words_ngram1)))
+
+custom_dictionary_ngram <- custom_stop_words_ngram %>%
+  rbind(stop_words)
+
+# Removing the stop words from bigrams and the separated bigram data frame which will be used later on
+bigram <- bigram %>%
+  filter(!word1 %in% custom_dictionary_ngram$word) %>%
+  filter(!word2 %in% custom_dictionary_ngram$word)
+
+bigrams_separated <- bigrams_separated %>%
+  filter(!word1 %in% custom_dictionary_ngram$word) %>%
+  filter(!word2 %in% custom_dictionary_ngram$word)
+
+# Counting the bigrams
+bigrams_count <- bigrams_separated %>%
+  count(word1, word2, sort = TRUE)
+
+# Visualising the top 10 bigrams based on their frequencies and the average ratings
+bigram_top10 %>%
+  ggplot(aes(Average_Rating, Frequency)) +
+  geom_point(size = 2) +
+  geom_text_repel(aes(label = word), max.overlaps = 15) +
+  labs(title = "Top 10 Bigram Frequency (Review Level)",
+         x = "Average Rating",
+         y = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Visualising the top 10 bigrams for each rating
+bigram %>%
+  group_by(word) %>%
+  summarise(n = n(),
+            avg_star = round(mean(star))) %>%
+  arrange(desc(n)) %>%
+  group_by(avg_star) %>%
+  slice_max(n, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = avg_star)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Top 10 Bigram Frequencies For Rating Categories (Review Level)",
+         x = "Frequency",
+         y = "Terms") +
+  facet_wrap(~ avg_star, nrow = 2, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Filtering bigrams that repeat at least 100 times to be used for graphing associations
+bigram_assossiation <- bigrams_count %>%
+  filter(n > 100) %>%
+  graph_from_data_frame()
+
+set.seed(1)
+
+arrow_dimensions <- grid::arrow(type = "closed", length = unit(.2, "inches"))
+
+# Visualising the word associations on bigram level
+ggraph(bigram_assossiation, layout = "fr") +
+       geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                          arrow = arrow_dimensions, end_cap = circle(.07, "inches")) +
+       geom_node_point(color = "lightgreen", size = 3) +
+       geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+       theme_void()
+
+```
+
+```{r}
+# Tokenizing the reviews and their summaries as trigrams
+trigram <- travel_all %>%
+  unnest_tokens(word, summary_review, token = "ngrams", n = 3)
+
+# Adding indices for each row to separate the words, so the stop words can be removed
+trigram$index <- seq.int(nrow(trigram))
+
+# Separating the trigrams
+trigrams_separated <- trigram %>%
+  separate(word, c("word1", "word2", "word3"), sep = " ") %>%
+  select("index", "word1","word2", "word3")
+
+# Adding the separated versions of trigrams to the data frame
+trigram <- trigram %>%
+  left_join(trigrams_separated, by = "index")
+
+# Since there already is a customised dictionary for bigrams and trigrams, removing the stop words from the trigram data frame
+trigram <- trigram %>%
+  filter(!word1 %in% custom_dictionary_ngram$word) %>%
+  filter(!word2 %in% custom_dictionary_ngram$word) %>%
+  filter(!word3 %in% custom_dictionary_ngram$word)
+
+# Finding the top 8 trigrams and showing their frequencies as well as the average ratings they were used for
+trigram_top8 <- trigram %>%
+  group_by(word) %>%
+  summarise(Frequency = n(),
+            Average_Rating = mean(star)) %>%
+  top_n(8, Frequency) %>%
+  arrange(desc(Frequency))
+
+# Visualising the top 8 trigram frequency for ungrouped reviews
+trigram_top8 %>%
+  ggplot(aes(Frequency, reorder(word, Frequency))) +
+  geom_col() +
+  labs(title = "Top 8 Trigram Frequencies (Review Level)",
+         x = "Frequency",
+         y = "Terms") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Adding additional custom stop words and storing them separately
+custom_stop_words_ngram2 <- c("african", "excellent", "tahiti", "dacey's", "eu", "cornish", "de", "johnnie", "america", "chicago", "alpha", "safaris", "flights", "scam", "avoid", "horrible", "gbg", "florida", "info", "chi", "roo", "salt", "magnolia", "starmark", "sitters", "military", "charlene's", "tickets", "sleep", "customer", "israel", "inn", "pro", "executive", "del", "corolla")
+
+custom_stop_words_trigram <- data.frame(word = custom_stop_words_ngram2, lexicon = rep("custom", length(custom_stop_words_ngram2)))
+
+custom_dictionary_trigram <- custom_stop_words_trigram %>%
+  rbind(stop_words)
+
+# Removing the stop words from trigrams and the separated trigram data frame which will be used later on
+trigram <- trigram %>%
+  filter(!word1 %in% custom_stop_words_trigram$word) %>%
+  filter(!word2 %in% custom_stop_words_trigram$word) %>%
+  filter(!word3 %in% custom_stop_words_trigram$word)
+
+trigrams_separated <- trigrams_separated %>%
+  filter(!word1 %in% custom_stop_words_trigram$word) %>%
+  filter(!word2 %in% custom_stop_words_trigram$word) %>%
+  filter(!word3 %in% custom_stop_words_trigram$word)
+
+# Counting the trigrams
+trigrams_count <- trigrams_separated %>%
+  count(word1, word2, word3, sort = TRUE)
+
+# Visualising the top 8 trigrams based on their frequencies and the average ratings
+trigram_top8 %>%
+  ggplot(aes(Average_Rating, Frequency)) +
+  geom_point(size = 2) +
+  geom_text_repel(aes(label = word), max.overlaps = 15) +
+  labs(title = "Top 10 Trigram Frequency (Review Level)",
+         x = "Average Rating",
+         y = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Visualising the top 8 trigrams for each rating
+trigram %>%
+  group_by(word) %>%
+  summarise(n = n(),
+            avg_star = round(mean(star))) %>%
+  arrange(desc(n)) %>%
+  group_by(avg_star) %>%
+  slice_max(n, n = 5) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = avg_star)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Top 10 Trigram Frequencies For Rating Categories (Review Level)",
+         x = "Frequency",
+         y = "Terms") +
+  facet_wrap(~ avg_star, nrow = 2, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Filtering trigrams that repeat at least 260 times to be used for graphing associations
+trigram_assossiation <- trigrams_count %>%
+  filter(n > 260) %>%
+  graph_from_data_frame()
+
+set.seed(1)
+
+arrow_dimensions_tri <- grid::arrow(type = "closed", length = unit(.2, "inches"))
+
+# Visualising the word associations on trigram level
+ggraph(trigram_assossiation, layout = "fr") +
+       geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                          arrow = arrow_dimensions_tri, end_cap = circle(.07, "inches")) +
+       geom_node_point(color = "lightgreen", size = 3) +
+       geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+       theme_void()
+```
+
+# Unigrams and n-grams for grouped reviews
+```{r}
+# Counting the number of total words in the collapsed variable of review and its summary for each travel agency
+text_grouped_by_company$total_words_text <- stringr::str_count(text_grouped_by_company$text_grouped, "\\S+")
+
+# Adding the overall ratings of the travel agencies to the data frame
+text_grouped_by_company <- text_grouped_by_company %>%
+  left_join(for_overall)
+```
+
+```{r}
+# Visualising unigram frequency for grouped reviews
+unigram_grouped <- text_grouped_by_company %>%
+  unnest_tokens(word, text_grouped, token = "ngrams", n = 1) %>%
+  anti_join(stop_words)
+
+# Finding the top 10 unigrams and showing their frequencies as well as the travel agency ratings they were used for
+unigram_grouped_top10 <- unigram_grouped %>%
+  group_by(word) %>%
+  summarise(Frequency = n(),
+            Average_Rating = mean(overall_rating)) %>%
+  top_n(10, Frequency) %>%
+  arrange(desc(Frequency))
+
+# Adding custom stop words to be removed from the unigrams
+custom_stop_words2 <- c("travel", "service", "company", "customer", "booked")
+custom_stop_words_df2 <- data.frame(word = custom_stop_words2, lexicon = rep("custom", length(custom_stop_words2)))
+custom_dictionary_for_grouped_a <- custom_stop_words_df2 %>%
+  rbind(word = "swiss", lexicon = "custom",
+        word = "jetblue", lexicon = "custom",
+        word = "mmt", lexicon = "custom",
+        word = "makemytrip", lexicon = "custom",
+        word = "wizzair", lexicon = "custom",
+        word = "adele", lexicon = "custom",
+        word = "wizz", lexicon = "custom",
+        word = "protime", lexicon = "custom",
+        word = "rs", lexicon = "custom",
+        word = "inn", lexicon = "custom",
+        word = "blue", lexicon = "custom",
+        word = "qatar", lexicon = "custom",
+        word = "ctrip", lexicon = "custom",
+        word = "singapore", lexicon = "custom",
+        word = "kiwi", lexicon = "custom",
+        word = "southwest", lexicon = "custom",
+        word = "msc", lexicon = "custom",
+        word = "dollar", lexicon = "custom",
+        word = "told", lexicon = "custom",
+        word = "people", lexicon = "custom",
+        word = "africa", lexicon = "custom",
+        word = "croatia", lexicon = "custom",
+        word = "cuba", lexicon = "custom",
+        word = "ireland", lexicon = "custom",
+        word = "safari", lexicon = "custom",
+        word = "days", lexicon = "custom",
+        word = "tickets", lexicon = "custom",
+        word = "turkish", lexicon = "custom",
+        word = "western", lexicon = "custom",
+        word = "liftopia", lexicon = "custom",
+        word = "bean", lexicon = "custom",
+        word = "walker", lexicon = "custom",
+        word = "airways", lexicon = "custom",
+        word = "simplio", lexicon = "custom",
+        word = "zach", lexicon = "custom",
+        word = "swiz", lexicon = "custom",
+        word = "protimetours", lexicon = "custom",
+        word = "mapmaker", lexicon = "custom",
+        word = "coldplay", lexicon = "custom",
+        word = "wembley", lexicon = "custom",
+        word = "watchdog", lexicon = "custom",
+        word = "oyo", lexicon = "custom",
+        word = "regency", lexicon = "custom",
+        word = "luton", lexicon = "custom",
+        word = "chf", lexicon = "custom",
+        word = "dwayne", lexicon = "custom",
+        word = "david", lexicon = "custom",
+        word = "called", lexicon = "custom",
+        word = "meredith", lexicon = "custom",
+        word = "ll", lexicon = "custom",
+        word = "dc", lexicon = "custom",
+        word = "transavia", lexicon = "custom",
+        word = "tesco", lexicon = "custom",
+        word = "eurorest", lexicon = "custom",
+        word = "lodz", lexicon = "custom",
+        word = "lycafly", lexicon = "custom",
+        word = "makemy", lexicon = "custom",
+        word = "martires", lexicon = "custom",
+        word = "nn", lexicon = "custom",
+        word = "sau", lexicon = "custom",
+        word = "seatles", lexicon = "custom",
+        word = "sheeran", lexicon = "custom",
+        word = "sst", lexicon = "custom",
+        word = "swissair", lexicon = "custom",
+        word = "waittime", lexicon = "custom",
+        word = "koukoullis", lexicon = "custom",
+        word = "surya", lexicon = "custom",
+        word = "egyptair", lexicon = "custom",
+        word = "istanbul", lexicon = "custom",
+        word = "aa", lexicon = "custom",
+        word = "spokane", lexicon = "custom",
+        word = "johnnie", lexicon = "custom",
+        word = "pegasus", lexicon = "custom",
+        word = "doha", lexicon = "custom",
+        word = "peru", lexicon = "custom") %>%
+  rbind(stop_words)
+
+# Removing the stop words
+unigram_grouped <- unigram_grouped %>%
+  anti_join(custom_dictionary_for_grouped_a)
+
+# Visualising the top 10 unigram frequency for ungrouped reviews
+unigram_grouped_top10 %>%
+  ggplot(aes(Frequency, reorder(word, Frequency))) +
+  geom_col() +
+  labs(title = "Top 10 Unigram Frequencies (Company Level)",
+         x = "Frequency",
+         y = "Terms") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Visualising the top 10 unigrams based on their frequencies and the overall ratings
+unigram_grouped_top10 %>%
+  ggplot(aes(Average_Rating, Frequency)) +
+  geom_point(size = 2) +
+  geom_text_repel(aes(label = word), max.overlaps = 15) +
+  labs(title = "Top 10 Unigram Frequency (Company Level)",
+         x = "Average Rating",
+         y = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Visualising the top 10 unigrams for each rating
+unigram_grouped %>%
+  group_by(word) %>%
+  summarise(n = n(),
+            avg_rating = round(mean(overall_rating))) %>%
+  arrange(desc(n)) %>%
+  group_by(avg_rating) %>%
+  slice_max(n, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = avg_rating)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Top 10 Unigram Frequencies For Rating Categories (Company Level)",
+         x = "Frequency",
+         y = "Terms") +
+  facet_wrap(~ avg_rating, nrow = 2, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# Tokenizing the reviews and their summaries as bigrams for grouped reviews
+bigram_grouped <- text_grouped_by_company %>%
+  unnest_tokens(word, text_grouped, token = "ngrams", n = 2)
+
+# Adding indices for each row to separate the words, so the stop words can be removed
+bigram_grouped$index <- seq.int(nrow(bigram_grouped))
+
+# Separating the bigrams
+bigrams_company_separated <- bigram_grouped %>%
+  separate(word, c("word1", "word2"), sep = " ") %>%
+  select("index", "word1","word2")
+
+# Adding the separated versions of bigrams to the data frame
+bigram_grouped <- bigram_grouped %>%
+  left_join(bigrams_company_separated, by = "index")
+
+# Since words that have been a stop word for unigrams can be more informative and specific for bigrams and trigrams, a separate custom stop word dictionary is created
+custom_dictionary_ngram_grouped <- data.frame()
+
+# Adding the base level stop words to the dictionary
+custom_dictionary_ngram_grouped <- custom_dictionary_ngram_grouped %>%
+  rbind(stop_words)
+
+# Removing the instances where the bigram contains a stop word from the custom ngram dictionary
+bigram_grouped <- bigram_grouped %>%
+  filter(!word1 %in% custom_dictionary_ngram_grouped$word) %>%
+  filter(!word2 %in% custom_dictionary_ngram_grouped$word)
+
+# Finding the top 10 bigrams and showing their frequencies as well as the average ratings they were used for
+bigram_company_top10 <- bigram_grouped %>%
+  group_by(word) %>%
+  summarise(Frequency = n(),
+            Average_Rating = mean(overall_rating)) %>%
+  top_n(10, Frequency) %>%
+  arrange(desc(Frequency))
+
+# Visualising the top 10 bigram frequency for grouped reviews
+bigram_company_top10 %>%
+  ggplot(aes(Frequency, reorder(word, Frequency))) +
+  geom_col() +
+  labs(title = "Top 10 Bigram Frequencies (Company Level)",
+         x = "Frequency",
+         y = "Terms") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Adding custom stop words for bigrams and trigrams
+custom_stop_words_ngram3 <- c("guides", "costa", "rica", "american", "hong", "kong", "dot", "customer", "due", "cathay", "pacific", "sky", "dollar", "meredith", "lodging", "multiple", "proble", "las", "vegas", "ago", "diamond", "resorts", "africa", "irish", "inn", "singapore", "turkish", "ll", "qatar", "jet", "swiss", "pro", "wizz", "adele", "protime", "kenya", "african", "sa", "italy", "johnnie", "choice", "tours", "wiz", "surya", "jetblue", "southern")
+
+custom_stop_words_ngram_grouped <- data.frame(word = custom_stop_words_ngram3, lexicon = rep("custom", length(custom_stop_words_ngram3)))
+
+custom_dictionary_ngram_grouped <- custom_stop_words_ngram_grouped %>%
+  rbind(stop_words)
+
+# Removing the stop words from bigrams and the separated bigram data frame which will be used later on
+bigram_grouped <- bigram_grouped %>%
+  filter(!word1 %in% custom_dictionary_ngram_grouped$word) %>%
+  filter(!word2 %in% custom_dictionary_ngram_grouped$word)
+
+bigrams_company_separated <- bigrams_company_separated %>%
+  filter(!word1 %in% custom_dictionary_ngram_grouped$word) %>%
+  filter(!word2 %in% custom_dictionary_ngram_grouped$word)
+
+# Counting the bigrams
+bigrams_grouped_count <- bigrams_company_separated %>%
+  count(word1, word2, sort = TRUE)
+
+# Visualising the top 10 bigrams based on their frequencies and the overall ratings
+bigram_company_top10 %>%
+  ggplot(aes(Average_Rating, Frequency)) +
+  geom_point(size = 2) +
+  geom_text_repel(aes(label = word), max.overlaps = 15) +
+  labs(title = "Top 10 Bigram Frequency (Company Level)",
+         x = "Average Rating",
+         y = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Visualising the top 10 bigrams for each rating
+bigram_grouped %>%
+  group_by(word) %>%
+  summarise(n = n(),
+            avg_rating = round(mean(overall_rating))) %>%
+  arrange(desc(n)) %>%
+  group_by(avg_rating) %>%
+  slice_max(n, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = avg_rating)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Top 10 Bigram Frequencies For Rating Categories (Company Level)",
+         x = "Frequency",
+         y = "Terms") +
+  facet_wrap(~ avg_rating, nrow = 2, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Filtering bigrams that repeat at least 125 times to be used for graphing associations
+bigram_company_assossiation <- bigrams_grouped_count %>%
+  filter(n > 125) %>%
+  graph_from_data_frame()
+
+set.seed(1)
+
+arrow_dimensions_company <- grid::arrow(type = "closed", length = unit(.2, "inches"))
+
+ggraph(bigram_company_assossiation, layout = "fr") +
+       geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                          arrow = arrow_dimensions_company, end_cap = circle(.07, "inches")) +
+       geom_node_point(color = "lightgreen", size = 3) +
+       geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+       theme_void()
+```
+
+```{r}
+# Tokenizing the reviews and their summaries as trigrams for grouped reviews
+trigram_grouped <- text_grouped_by_company %>%
+  unnest_tokens(word, text_grouped, token = "ngrams", n = 3)
+
+# Adding indices for each row to separate the words, so the stop words can be removed
+trigram_grouped$index <- seq.int(nrow(trigram_grouped))
+
+# Separating the trigrams
+trigrams_company_separated <- trigram_grouped %>%
+  separate(word, c("word1", "word2", "word3"), sep = " ") %>%
+  select("index", "word1","word2", "word3")
+
+# Adding the separated versions of trigrams to the data frame
+trigram_grouped <- trigram_grouped %>%
+  left_join(trigrams_company_separated, by = "index")
+
+# Since there already is a customised dictionary for bigrams and trigrams, removing the stop words from the trigram data frame
+trigram_grouped <- trigram_grouped %>%
+  filter(!word1 %in% custom_dictionary_ngram_grouped$word) %>%
+  filter(!word2 %in% custom_dictionary_ngram_grouped$word) %>%
+  filter(!word3 %in% custom_dictionary_ngram_grouped$word)
+
+# Finding the top 8 trigrams and showing their frequencies as well as the average ratings they were used for
+trigram_company_top8 <- trigram_grouped %>%
+  group_by(word) %>%
+  summarise(Frequency = n(),
+            Average_Rating = mean(overall_rating)) %>%
+  top_n(8, Frequency) %>%
+  arrange(desc(Frequency))
+
+# Visualising the top 8 trigram frequency for grouped reviews
+trigram_company_top8 %>%
+  ggplot(aes(Frequency, reorder(word, Frequency))) +
+  geom_col() +
+  labs(title = "Top 8 Trigram Frequencies (Company Level)",
+         x = "Frequency",
+         y = "Terms") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Adding additional custom stop words and storing them separately
+custom_stop_words_ngram4 <- c("safaris", "tahiti", "eu", "chicago", "south", "use.active", "corolla", "pm", "regency", "nn", "alpha", "")
+
+custom_stop_words_ngram_grouped_trigram <- data.frame(word = custom_stop_words_ngram4, lexicon = rep("custom", length(custom_stop_words_ngram4)))
+
+custom_dictionary_grouped_trigram <- custom_stop_words_ngram_grouped_trigram %>%
+  rbind(stop_words)
+
+# Removing the stop words from trigrams and the separated trigram data frame which will be used later on
+trigram_grouped <- trigram_grouped %>%
+  filter(!word1 %in% custom_dictionary_grouped_trigram$word) %>%
+  filter(!word2 %in% custom_dictionary_grouped_trigram$word) %>%
+  filter(!word3 %in% custom_dictionary_grouped_trigram$word)
+
+trigrams_company_separated <- trigrams_company_separated %>%
+  filter(!word1 %in% custom_dictionary_grouped_trigram$word) %>%
+  filter(!word2 %in% custom_dictionary_grouped_trigram$word) %>%
+  filter(!word3 %in% custom_dictionary_grouped_trigram$word)
+
+# Counting the trigrams
+trigrams_grouped_count <- trigrams_company_separated %>%
+  count(word1, word2, word3, sort = TRUE)
+
+# Visualising the top 8 trigrams based on their frequencies and the overall ratings
+trigram_company_top8 %>%
+  ggplot(aes(Average_Rating, Frequency)) +
+  geom_point(size = 2) +
+  geom_text_repel(aes(label = word), max.overlaps = 15) +
+  labs(title = "Top 10 Trigram Frequency (Company Level)",
+         x = "Average Rating",
+         y = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Visualising the top 8 trigrams for each rating
+trigram_grouped %>%
+  group_by(word) %>%
+  summarise(n = n(),
+            avg_rating = round(mean(overall_rating))) %>%
+  arrange(desc(n)) %>%
+  group_by(avg_rating) %>%
+  slice_max(n, n = 5) %>%
+  ungroup() %>%
+  ggplot(aes(n, fct_reorder(word, n), fill = avg_rating)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Top 10 Trigram Frequencies For Rating Categories (Review Level)",
+         x = "Frequency",
+         y = "Terms") +
+  facet_wrap(~ avg_rating, nrow = 2, scales = "free") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Filtering bigrams that repeat at least 25 times to be used for graphing associations
+trigram_company_assossiation <- trigrams_grouped_count %>%
+  filter(n > 25) %>%
+  graph_from_data_frame()
+
+set.seed(1)
+
+arrow_dimensions_grouped_tri <- grid::arrow(type = "closed", length = unit(.2, "inches"))
+
+ggraph(trigram_company_assossiation, layout = "fr") +
+       geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                          arrow = arrow_dimensions_grouped_tri, end_cap = circle(.07, "inches")) +
+       geom_node_point(color = "lightgreen", size = 3) +
+       geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+       theme_void()
+```
+
+# Word Clouds for Company Level Based on Overall Ratings
+```{r}
+set.seed(1)
+
+# Storing the unigrams used for overall rating of 5 and counting them
+overall_5 <- unigram_grouped %>%
+  filter(overall_rating == 5) %>%
+  group_by(word) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))
+
+# Visualising the word cloud for overall rating of 5
+wordcloud(overall_5$word, overall_5$total, max.words = 32,
+          colors = c("forestgreen", "violetred", "darkgoldenrod3"))
+
+# Storing the unigrams used for overall rating of 4 and counting them
+overall_4 <- unigram_grouped %>%
+  filter(overall_rating == 4) %>%
+  group_by(word) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))
+
+# Visualising the word cloud for overall rating of 4
+wordcloud(overall_4$word, overall_4$total, max.words = 32,
+          colors = c("forestgreen", "violetred", "darkgoldenrod3"))
+
+# Storing the unigrams used for overall rating of 3 and counting them
+overall_3 <- unigram_grouped %>%
+  filter(overall_rating == 3) %>%
+  group_by(word) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))
+
+# Visualising the word cloud for overall rating of 3
+wordcloud(overall_3$word, overall_3$total, max.words = 32,
+          colors = c("forestgreen", "violetred", "darkgoldenrod3"))
+
+# Storing the unigrams used for overall rating of 2 and counting them
+overall_2 <- unigram_grouped %>%
+  filter(overall_rating == 2) %>%
+  group_by(word) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))
+
+# Visualising the word cloud for overall rating of 2
+wordcloud(overall_2$word, overall_2$total, max.words = 32,
+          colors = c("forestgreen", "violetred", "darkgoldenrod3"))
+
+# Storing the unigrams used for overall rating of 1 and counting them
+overall_1 <- unigram_grouped %>%
+  filter(overall_rating == 1) %>%
+  group_by(word) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))
+
+# Visualising the word cloud for overall rating of 1
+wordcloud(overall_1$word, overall_1$total, max.words = 32,
+          colors = c("forestgreen", "violetred", "darkgoldenrod3"))
+```
+
+# Word Associations for Review Level
+```{r}
+# DTM is built for unigrams, bigrams, and trigrams in order to be used for word correlations
+dtm_unigram <- unigram %>%
+  count(review_id, word) %>%
+  cast_dtm(review_id, word, n)
+
+inspect(dtm_unigram)
+
+dtm_bigram <- bigram %>%
+  count(review_id, word) %>%
+  cast_dtm(review_id, word, n)
+
+inspect(dtm_bigram)
+
+dtm_trigram <- trigram %>%
+  count(review_id, word) %>%
+  cast_dtm(review_id, word, n)
+
+inspect(dtm_trigram)
+
+# Unigram, bigram, and trigram are all giving 100% sparsity, hence unigram is used from now on
+
+dtm_unigram_sparse <- removeSparseTerms(dtm_unigram, 0.97)
+inspect(dtm_unigram_sparse)
+
+# Finding the words that are associated with "recommend", "refund", and "tour" according to the DTM of unigrams
+findAssocs(dtm_unigram_sparse, "recommend", corlimit = 0.1)
+findAssocs(dtm_unigram_sparse, "refund", corlimit = 0.3)
+findAssocs(dtm_unigram_sparse, "tour", corlimit = 0.4)
+```
+
+```{r}
+# Checking the word combinations that have "excellent" or "amazing" in order to get an idea about things that are liked in the reviews by the users
+bigram %>% group_by(word) %>%
+  count(sort = TRUE) %>%
+  filter(stringr::str_detect(word,"excellent | amazing"))
+
+# Checking the word combinations that have "refund" in order to get an idea about the things that are mentioned with having refunds in the reviews by the users
+bigram %>% group_by(word) %>%
+  count(sort = TRUE) %>%
+  filter(stringr::str_detect(word,"refund"))
+
+# Checking the word combinations that have "time" in order to get an idea about things that are liked in the reviews by the users
+bigram %>% group_by(word) %>%
+  count(sort = TRUE) %>%
+  filter(stringr::str_detect(word,"time"))
+```
+
+# Word Associations for Company Level
+```{r}
+# DTM is built for unigrams, bigrams, and trigrams in order to be used for word correlations
+dtm_unigram_grouped <- unigram_grouped %>%
+  count(agency_id, word) %>%
+  cast_dtm(agency_id, word, n)
+
+inspect(dtm_unigram_grouped)
+
+dtm_bigram_grouped <- bigram_grouped %>%
+  count(agency_id, word) %>%
+  cast_dtm(agency_id, word, n)
+
+inspect(dtm_bigram_grouped)
+
+dtm_trigram_grouped <- trigram_grouped %>%
+  count(agency_id, word) %>%
+  cast_dtm(agency_id, word, n)
+
+inspect(dtm_trigram_grouped)
+
+# Bigram and trigram are giving 100% sparsity, hence bigrams are to be used instead of trigrams and the sparsity of DTM of bigram is reduced
+
+dtm_bigram_grouped_sparse <- removeSparseTerms(dtm_bigram_grouped, 0.97)
+inspect(dtm_bigram_grouped_sparse)
+
+dtm_trigram_grouped_sparse <- removeSparseTerms(dtm_trigram_grouped, 0.97)
+inspect(dtm_trigram_grouped_sparse)
+
+# Finding the words that are associated with "booking", "experience", "recommend" and "time" according to the DTM of unigrams
+findAssocs(dtm_unigram_grouped, "booking", corlimit = 0.6)
+findAssocs(dtm_unigram_grouped, "experience", corlimit = 0.6)
+findAssocs(dtm_unigram_grouped, "recommend", corlimit = 0.6)
+findAssocs(dtm_unigram_grouped, "time", corlimit = 0.55)
+
+# Finding the words that are associated with "top notch", "credit card","highly recommend", and "tour guide" according to the DTM of bigrams
+findAssocs(dtm_bigram_grouped_sparse, "top notch", corlimit = 0.35)
+findAssocs(dtm_bigram_grouped_sparse, "credit card", corlimit = 0.5)
+findAssocs(dtm_bigram_grouped_sparse, "highly recommend", corlimit = 0.4)
+findAssocs(dtm_bigram_grouped_sparse, "tour guide", corlimit = 0.5)
+
+```
+
+```{r}
+# Checking the word combinations that have "excellent" or "amazing" in order to get an idea about things that are liked in the reviews by the users
+trigram_grouped %>% group_by(word) %>%
+  count(sort = TRUE) %>%
+  filter(stringr::str_detect(word,"excellent | amazing"))
+
+# Checking the word combinations that have "refund" in order to get an idea about the things that are mentioned with having refunds in the reviews by the users
+trigram_grouped %>% group_by(word) %>%
+  count(sort = TRUE) %>%
+  filter(stringr::str_detect(word,"refund"))
+
+# Checking the word combinations that have "time" in order to get an idea about things that are liked in the reviews by the users
+trigram_grouped %>% group_by(word) %>%
+  count(sort = TRUE) %>%
+  filter(stringr::str_detect(word,"time"))
+```
+
+```{r}
+# Categories
+# For adding the category of the travel agency
+for_category <- travel_all %>%
+  select(agency_id, category) %>%
+  unique()
+
+# Adding the category of the travel agency to the data frame
+tokenized_reviews_grouped_by_tf_idf <- tokenized_reviews_grouped_by_tf_idf %>%
+  left_join(for_category)
+
+# Finding the top 5 categories based on tf-idf values
+top_5_categories <- tokenized_reviews_grouped_by_tf_idf %>%
+  arrange(desc(tf_idf)) %>%
+  select(agency_id, category) %>%
+  unique() %>%
+  group_by(category) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total)) %>%
+  top_n(5)
+
+# Filtering the words that are used in the reviews for the travel agencies from the top 5 categories
+tokens_top_5_categories <- tokenized_reviews_grouped_by_tf_idf %>%
+  select(agency_id, category) %>%
+  filter(category %in% top_5_categories$category) %>%
+  unique()
+
+# Calculating the total number of occurrences of the tokens that are kept for each category 
+category_tokens <- tokenized_reviews_grouped_by_tf_idf %>%
+  right_join(tokens_top_5_categories) %>%
+  group_by(category, word) %>%
+  summarise(total = sum(n)) %>%
+  arrange(desc(total))
+
+# Loop for getting the top 10 tokens per category for the travel agency
+result1 <- data.frame()
+for(categ in 1:nrow(top_5_categories)) {
+  print(paste0("For category: ", top_5_categories$category[categ]))
+  result1_temp <- category_tokens %>%
+    ungroup() %>%
+    filter(category == top_5_categories$category[categ]) %>%
+    slice_max(total, n = 10) %>%
+    select(-total) %>%
+    mutate(rank = row_number())
+  result1 <- rbind(result1, result1_temp)
+}
+(result1)
+
+# Countries
+# For adding the country of the reviews for travel agencies
+for_country <- travel_all %>%
+  select(agency_id, country) %>%
+  unique()
+
+# Adding the country of the reviews to the data frame
+tokenized_reviews_grouped_by_tf_idf <- tokenized_reviews_grouped_by_tf_idf %>%
+  left_join(for_country)
+
+# Finding the top 10 countries based on tf-idf values
+top_10_countries <- tokenized_reviews_grouped_by_tf_idf %>%
+  arrange(desc(tf_idf)) %>%
+  select(agency_id, country) %>%
+  unique(.) %>%
+  group_by(country) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total)) %>%
+  top_n(10)
+
+# Filtering the words that are used in the reviews for the travel agencies from the top 10 countries
+tokens_top_10_countries <- tokenized_reviews_grouped_by_tf_idf %>%
+  select(agency_id, country) %>%
+  filter(country %in% top_10_countries$country) %>%
+  unique(.)
+
+# Calculating the total number of occurrences of the tokens that are kept for each country 
+country_tokens <- tokenized_reviews_grouped_by_tf_idf %>%
+  right_join(tokens_top_10_countries) %>%  
+  group_by(country, word) %>%
+  summarise(total = sum(n)) %>%
+  arrange(desc(total))
+
+# Loop for getting the top 10 tokens per country for the reviews per travel agency
+result2 <- data.frame()
+for(cntry in 1:nrow(top_10_countries)){
+  print(paste0("For country: ", top_10_countries$country[cntry]))
+  result2_temp <- country_tokens %>%
+    ungroup() %>%
+    filter(country == top_10_countries$country[cntry]) %>%
+    slice_max(total, n = 10) %>%
+    select(-total) %>%
+    mutate(rank = row_number())
+  result2 <- rbind(result2, result2_temp)
+}
+(result2)
+```
